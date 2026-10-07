@@ -1,0 +1,1219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sentinel-2 Change Detection | Local Analysis System</title>
+  <meta name="description" content="Local-first Sentinel-2 satellite imagery change detection — compare multi-temporal imagery, compute NDVI/NDWI, and detect land-cover changes.">
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <!-- Leaflet Draw -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css"/>
+  <!-- Google Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+  <style>
+    /* ── Design Tokens ─────────────────────────────────────────── */
+    :root {
+      --bg-0: #0a0e1a;
+      --bg-1: #0f1628;
+      --bg-2: #141d35;
+      --bg-3: #1a2540;
+      --bg-glass: rgba(20, 29, 53, 0.85);
+      --border: rgba(99, 179, 237, 0.15);
+      --border-bright: rgba(99, 179, 237, 0.35);
+
+      --accent: #3b82f6;
+      --accent-glow: rgba(59, 130, 246, 0.35);
+      --accent-2: #06b6d4;
+      --success: #22d3a0;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+
+      --text-primary: #e2e8f0;
+      --text-secondary: #94a3b8;
+      --text-muted: #4a5568;
+
+      --radius: 12px;
+      --radius-sm: 8px;
+      --shadow-glow: 0 0 30px rgba(59, 130, 246, 0.15);
+    }
+
+    /* ── Reset & Base ──────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { height: 100%; }
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg-0);
+      color: var(--text-primary);
+      height: 100%;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Header ────────────────────────────────────────────────── */
+    header {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 12px 24px;
+      background: var(--bg-glass);
+      border-bottom: 1px solid var(--border);
+      backdrop-filter: blur(20px);
+      z-index: 1000;
+      flex-shrink: 0;
+    }
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      text-decoration: none;
+    }
+    .logo-icon {
+      width: 36px; height: 36px;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px;
+    }
+    .logo-text { font-size: 1.1rem; font-weight: 700; color: var(--text-primary); }
+    .logo-sub { font-size: 0.7rem; color: var(--text-secondary); font-weight: 400; }
+    header .spacer { flex: 1; }
+    .header-badge {
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+    }
+    .badge-ok { background: rgba(34, 211, 160, 0.15); color: var(--success); border: 1px solid rgba(34,211,160,0.3); }
+    .badge-warn { background: rgba(245, 158, 11, 0.15); color: var(--warning); border: 1px solid rgba(245,158,11,0.3); }
+    .badge-mono { font-family: 'JetBrains Mono', monospace; font-size: 0.65rem; }
+
+    /* ── Main Layout ───────────────────────────────────────────── */
+    .app-body {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    /* ── Sidebar ───────────────────────────────────────────────── */
+    .sidebar {
+      width: 380px;
+      min-width: 340px;
+      background: var(--bg-1);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .sidebar-scroll {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px;
+      scrollbar-width: thin;
+      scrollbar-color: var(--bg-3) transparent;
+    }
+
+    /* ── Cards ─────────────────────────────────────────────────── */
+    .card {
+      background: var(--bg-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      margin-bottom: 16px;
+      overflow: hidden;
+    }
+    .card-header {
+      padding: 14px 18px 12px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .card-header h3 {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+    }
+    .card-icon { font-size: 16px; }
+    .card-body { padding: 16px 18px; }
+
+    /* ── Form Controls ─────────────────────────────────────────── */
+    .form-group { margin-bottom: 14px; }
+    .form-group label {
+      display: block;
+      font-size: 0.75rem;
+      font-weight: 500;
+      color: var(--text-secondary);
+      margin-bottom: 6px;
+      letter-spacing: 0.3px;
+    }
+    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    input[type="text"], input[type="number"], input[type="date"], select {
+      width: 100%;
+      background: var(--bg-3);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text-primary);
+      font-family: 'Inter', sans-serif;
+      font-size: 0.85rem;
+      padding: 9px 12px;
+      outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    input:focus, select:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-glow);
+    }
+    input[type="range"] {
+      width: 100%; accent-color: var(--accent);
+      cursor: pointer;
+    }
+    .range-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .range-val {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.8rem;
+      color: var(--accent);
+      min-width: 38px;
+      text-align: right;
+    }
+
+    /* ── Buttons ───────────────────────────────────────────────── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 10px 20px;
+      border-radius: var(--radius-sm);
+      font-family: 'Inter', sans-serif;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      outline: none;
+      transition: all 0.2s;
+      text-decoration: none;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, var(--accent), #2563eb);
+      color: #fff;
+      width: 100%;
+      padding: 12px;
+      box-shadow: 0 4px 15px var(--accent-glow);
+    }
+    .btn-primary:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 20px var(--accent-glow);
+    }
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+    .btn-secondary {
+      background: var(--bg-3);
+      color: var(--text-secondary);
+      border: 1px solid var(--border);
+      width: 100%;
+      padding: 10px;
+    }
+    .btn-secondary:hover { border-color: var(--border-bright); color: var(--text-primary); }
+    .btn-success {
+      background: linear-gradient(135deg, var(--success), #059669);
+      color: #fff;
+      width: 100%;
+      padding: 12px;
+      box-shadow: 0 4px 15px rgba(34,211,160,0.25);
+    }
+    .btn-sm { padding: 6px 14px; font-size: 0.78rem; }
+
+    /* ── Observation List ──────────────────────────────────────── */
+    .obs-list { display: flex; flex-direction: column; gap: 8px; max-height: 320px; overflow-y: auto; }
+    .obs-item {
+      background: var(--bg-3);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 12px 14px;
+      cursor: pointer;
+      transition: all 0.2s;
+      position: relative;
+    }
+    .obs-item:hover { border-color: var(--accent); background: rgba(59,130,246,0.08); }
+    .obs-item.selected-before { border-color: var(--accent); background: rgba(59,130,246,0.12); }
+    .obs-item.selected-after { border-color: var(--success); background: rgba(34,211,160,0.12); }
+    .obs-name { font-size: 0.72rem; font-family: 'JetBrains Mono', monospace; color: var(--text-secondary); margin-bottom: 4px; }
+    .obs-meta { display: flex; gap: 10px; flex-wrap: wrap; }
+    .obs-badge {
+      font-size: 0.68rem;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-weight: 500;
+    }
+    .obs-date { background: rgba(59,130,246,0.15); color: var(--accent); }
+    .obs-cloud { background: rgba(148,163,184,0.15); color: var(--text-secondary); }
+    .obs-cloud.low { color: var(--success); }
+    .obs-cloud.high { color: var(--warning); }
+    .obs-slot {
+      position: absolute;
+      top: 8px; right: 10px;
+      font-size: 0.65rem;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 8px;
+    }
+    .slot-before { background: rgba(59,130,246,0.25); color: var(--accent); }
+    .slot-after { background: rgba(34,211,160,0.25); color: var(--success); }
+
+    /* ── Status / Progress ─────────────────────────────────────── */
+    .status-bar {
+      padding: 10px 18px;
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+      border-top: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--bg-1);
+      flex-shrink: 0;
+    }
+    .status-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--text-muted);
+      flex-shrink: 0;
+    }
+    .status-dot.ok { background: var(--success); box-shadow: 0 0 6px var(--success); }
+    .status-dot.busy { background: var(--warning); animation: pulse 1s ease-in-out infinite; }
+    .status-dot.error { background: var(--danger); }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+    /* ── Map Container ─────────────────────────────────────────── */
+    #map-container {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+    }
+    #map { width: 100%; height: 100%; }
+
+    /* ── Results Panel ─────────────────────────────────────────── */
+    .results-panel {
+      position: absolute;
+      bottom: 20px; right: 20px;
+      width: 420px;
+      background: var(--bg-glass);
+      border: 1px solid var(--border-bright);
+      border-radius: var(--radius);
+      backdrop-filter: blur(20px);
+      box-shadow: var(--shadow-glow), 0 20px 60px rgba(0,0,0,0.5);
+      z-index: 500;
+      display: none;
+      max-height: 70vh;
+      overflow-y: auto;
+    }
+    .results-panel.visible { display: block; }
+    .results-header {
+      padding: 16px 20px 14px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .results-header h2 { font-size: 0.9rem; font-weight: 700; color: var(--text-primary); }
+    .results-body { padding: 16px 20px; }
+
+    /* ── Stats Grid ────────────────────────────────────────────── */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    .stat-item {
+      background: var(--bg-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 12px 14px;
+    }
+    .stat-val {
+      font-size: 1.5rem;
+      font-weight: 700;
+      font-family: 'JetBrains Mono', monospace;
+      color: var(--accent);
+      margin-bottom: 2px;
+    }
+    .stat-val.danger { color: var(--danger); }
+    .stat-val.success { color: var(--success); }
+    .stat-label { font-size: 0.7rem; color: var(--text-secondary); }
+
+    /* ── Viz Gallery ───────────────────────────────────────────── */
+    .viz-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .viz-item {
+      border-radius: var(--radius-sm);
+      overflow: hidden;
+      border: 1px solid var(--border);
+      cursor: pointer;
+      transition: border-color 0.2s;
+    }
+    .viz-item:hover { border-color: var(--border-bright); }
+    .viz-item img { width: 100%; display: block; aspect-ratio: 1; object-fit: cover; }
+    .viz-label { padding: 5px 8px; font-size: 0.68rem; color: var(--text-secondary); background: var(--bg-2); text-align: center; }
+
+    /* ── Index Hints ───────────────────────────────────────────── */
+    .hints-section { margin-top: 14px; }
+    .hints-title {
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      margin-bottom: 8px;
+    }
+    .hint-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 7px 12px;
+      background: var(--bg-2);
+      border-radius: var(--radius-sm);
+      margin-bottom: 5px;
+      font-size: 0.78rem;
+    }
+    .hint-key { color: var(--text-secondary); }
+    .hint-val { color: var(--accent); font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; }
+    .disclaimer {
+      margin-top: 12px;
+      padding: 10px 14px;
+      background: rgba(245,158,11,0.08);
+      border: 1px solid rgba(245,158,11,0.2);
+      border-radius: var(--radius-sm);
+      font-size: 0.72rem;
+      color: var(--warning);
+      line-height: 1.5;
+    }
+
+    /* ── Map Controls Overlay ──────────────────────────────────── */
+    .map-controls {
+      position: absolute;
+      top: 16px; left: 16px;
+      z-index: 500;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .map-btn {
+      background: var(--bg-glass);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text-secondary);
+      padding: 8px 14px;
+      font-size: 0.78rem;
+      cursor: pointer;
+      backdrop-filter: blur(10px);
+      transition: all 0.2s;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .map-btn:hover { border-color: var(--border-bright); color: var(--text-primary); }
+    .map-btn.active { border-color: var(--accent); color: var(--accent); background: rgba(59,130,246,0.15); }
+
+    /* ── Loading Overlay ───────────────────────────────────────── */
+    .loading-overlay {
+      display: none;
+      position: fixed; inset: 0;
+      background: rgba(10,14,26,0.8);
+      z-index: 2000;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(4px);
+    }
+    .loading-overlay.visible { display: flex; }
+    .loading-box {
+      background: var(--bg-2);
+      border: 1px solid var(--border-bright);
+      border-radius: var(--radius);
+      padding: 32px 40px;
+      text-align: center;
+      max-width: 340px;
+    }
+    .spinner {
+      width: 48px; height: 48px;
+      border: 3px solid var(--bg-3);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 18px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading-msg { font-size: 0.9rem; color: var(--text-primary); margin-bottom: 6px; }
+    .loading-sub { font-size: 0.78rem; color: var(--text-secondary); }
+
+    /* ── Scrollbar ─────────────────────────────────────────────── */
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--bg-3); border-radius: 3px; }
+
+    /* ── Close btn ─────────────────────────────────────────────── */
+    .close-btn {
+      background: none; border: none; color: var(--text-muted);
+      cursor: pointer; font-size: 1.2rem; padding: 2px 6px;
+      border-radius: 4px; transition: color 0.2s;
+    }
+    .close-btn:hover { color: var(--text-primary); }
+
+    /* ── Toast ──────────────────────────────────────────────────── */
+    .toast-container {
+      position: fixed;
+      top: 70px; right: 20px;
+      z-index: 3000;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .toast {
+      padding: 12px 18px;
+      border-radius: var(--radius-sm);
+      font-size: 0.82rem;
+      color: #fff;
+      max-width: 320px;
+      animation: slideIn 0.3s ease;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .toast-error { background: rgba(239,68,68,0.9); border: 1px solid rgba(239,68,68,0.5); }
+    .toast-success { background: rgba(34,211,160,0.9); border: 1px solid rgba(34,211,160,0.5); color: #0a1a12; }
+    .toast-info { background: rgba(59,130,246,0.9); border: 1px solid rgba(59,130,246,0.5); }
+    @keyframes slideIn { from { transform: translateX(120%); opacity: 0; } to { transform: none; opacity: 1; } }
+
+    /* ── Selection hint ─────────────────────────────────────────── */
+    .sel-hint {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .sel-slot {
+      flex: 1;
+      padding: 8px 12px;
+      border-radius: var(--radius-sm);
+      font-size: 0.73rem;
+      text-align: center;
+      border: 1px dashed;
+    }
+    .sel-slot.before { border-color: rgba(59,130,246,0.4); color: var(--accent); background: rgba(59,130,246,0.06); }
+    .sel-slot.after { border-color: rgba(34,211,160,0.4); color: var(--success); background: rgba(34,211,160,0.06); }
+    .sel-slot.filled { border-style: solid; opacity: 1; }
+
+    /* ── Responsive ─────────────────────────────────────────────── */
+    @media (max-width: 768px) {
+      .sidebar { width: 100%; min-width: unset; height: 50vh; border-right: none; border-bottom: 1px solid var(--border); }
+      .app-body { flex-direction: column; }
+      .results-panel { width: calc(100% - 40px); left: 20px; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── Header ──────────────────────────────────────────────────── -->
+<header>
+  <a class="logo" href="/">
+    <div class="logo-icon">🛰️</div>
+    <div>
+      <div class="logo-text">Sentinel Change Detector</div>
+      <div class="logo-sub">Local-First · Sentinel-2 L2A</div>
+    </div>
+  </a>
+  <div class="spacer"></div>
+  {% if settings.has_credentials %}
+  <span class="header-badge badge-ok">● Copernicus Connected</span>
+  {% else %}
+  <span class="header-badge badge-warn">⚠ No Credentials</span>
+  {% endif %}
+  <a href="/api/docs" class="header-badge badge-mono" style="text-decoration:none; color: var(--text-secondary); border: 1px solid var(--border); padding: 4px 12px; border-radius: 20px; font-size: 0.7rem;">API Docs</a>
+</header>
+
+<!-- ── App Body ────────────────────────────────────────────────── -->
+<div class="app-body">
+
+  <!-- ── Sidebar ──────────────────────────────────────────────── -->
+  <aside class="sidebar">
+    <div class="sidebar-scroll">
+
+      <!-- Location Card -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-icon">📍</span>
+          <h3>Area of Interest</h3>
+        </div>
+        <div class="card-body">
+          <div class="form-row">
+            <div class="form-group">
+              <label>Latitude</label>
+              <input type="number" id="lat" step="0.0001" value="11.8745" min="-90" max="90" placeholder="11.8745">
+            </div>
+            <div class="form-group">
+              <label>Longitude</label>
+              <input type="number" id="lon" step="0.0001" value="75.3704" min="-180" max="180" placeholder="75.3704">
+            </div>
+          </div>
+          <div class="form-group">
+            <label>AOI Size (km)</label>
+            <div class="range-row">
+              <input type="range" id="size-km" min="1" max="50" value="10" step="1" oninput="document.getElementById('size-km-val').textContent=this.value+'km'">
+              <span class="range-val" id="size-km-val">10km</span>
+            </div>
+          </div>
+          <button class="btn btn-secondary" onclick="centerMap()">🎯 Center Map</button>
+        </div>
+      </div>
+
+      <!-- Date Range Card -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-icon">📅</span>
+          <h3>Date Range</h3>
+        </div>
+        <div class="card-body">
+          <div class="form-row">
+            <div class="form-group">
+              <label>From</label>
+              <input type="date" id="start-date" value="2024-01-01">
+            </div>
+            <div class="form-group">
+              <label>To</label>
+              <input type="date" id="end-date" value="2024-12-31">
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Max Cloud Cover</label>
+            <div class="range-row">
+              <input type="range" id="cloud-pct" min="0" max="100" value="{{ settings.default_cloud|int }}" step="5" oninput="document.getElementById('cloud-val').textContent=this.value+'%'">
+              <span class="range-val" id="cloud-val">{{ settings.default_cloud|int }}%</span>
+            </div>
+          </div>
+          <button class="btn btn-primary" id="search-btn" onclick="searchObservations()">
+            🔍 Find Satellite Images
+          </button>
+        </div>
+      </div>
+
+      <!-- Observations Card -->
+      <div class="card" id="obs-card" style="display:none">
+        <div class="card-header">
+          <span class="card-icon">🛰️</span>
+          <h3>Available Observations</h3>
+        </div>
+        <div class="card-body">
+          <p style="font-size:0.75rem; color:var(--text-muted); margin-bottom:10px;">
+            Click an observation to assign it. First click = <span style="color:var(--accent)">BEFORE</span>, second = <span style="color:var(--success)">AFTER</span>.
+          </p>
+          <div class="sel-hint">
+            <div class="sel-slot before" id="slot-before">📷 Before: not set</div>
+            <div class="sel-slot after" id="slot-after">📷 After: not set</div>
+          </div>
+          <div class="obs-list" id="obs-list"></div>
+        </div>
+      </div>
+
+      <!-- Download & Compare Card -->
+      <div class="card" id="action-card" style="display:none">
+        <div class="card-header">
+          <span class="card-icon">⚡</span>
+          <h3>Analysis</h3>
+        </div>
+        <div class="card-body">
+          <div class="form-group">
+            <label>Change Threshold</label>
+            <div class="range-row">
+              <input type="range" id="threshold" min="0.05" max="0.5" value="0.15" step="0.01" oninput="document.getElementById('thresh-val').textContent=parseFloat(this.value).toFixed(2)">
+              <span class="range-val" id="thresh-val">0.15</span>
+            </div>
+          </div>
+          <button class="btn btn-secondary" id="download-btn" onclick="downloadImages()" style="margin-bottom:10px">
+            ⬇ Download Selected Images
+          </button>
+          <button class="btn btn-success" id="compare-btn" onclick="runComparison()" disabled>
+            🔬 Detect Changes
+          </button>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Status Bar -->
+    <div class="status-bar">
+      <div class="status-dot" id="status-dot"></div>
+      <span id="status-text">Ready. Enter coordinates and search for imagery.</span>
+    </div>
+  </aside>
+
+  <!-- ── Map ──────────────────────────────────────────────────── -->
+  <div id="map-container">
+    <div id="map"></div>
+
+    <!-- Map Controls -->
+    <div class="map-controls">
+      <button class="map-btn" id="toggle-change-btn" onclick="toggleChangeLayer()" style="display:none">
+        🎨 Toggle Change Layer
+      </button>
+    </div>
+
+    <!-- Results Panel -->
+    <div class="results-panel" id="results-panel">
+      <div class="results-header">
+        <h2>📊 Change Detection Results</h2>
+        <button class="close-btn" onclick="closeResults()">✕</button>
+      </div>
+      <div class="results-body" id="results-body">
+        <!-- Filled by JS -->
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Loading Overlay ─────────────────────────────────────────── -->
+<div class="loading-overlay" id="loading">
+  <div class="loading-box">
+    <div class="spinner"></div>
+    <div class="loading-msg" id="loading-msg">Processing…</div>
+    <div class="loading-sub" id="loading-sub">This may take a moment</div>
+  </div>
+</div>
+
+<!-- ── Toast Container ────────────────────────────────────────── -->
+<div class="toast-container" id="toasts"></div>
+
+<!-- Leaflet JS -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+
+<script>
+// ── State ─────────────────────────────────────────────────────────
+const state = {
+  observations: [],
+  beforeObs: null,
+  afterObs: null,
+  downloadedBefore: null,
+  downloadedAfter: null,
+  resultId: null,
+  changeLayerVisible: true,
+  changeLayer: null,
+  bbox: null,
+};
+
+// ── Map Setup ─────────────────────────────────────────────────────
+const map = L.map('map', { zoomControl: false }).setView([11.8745, 75.3704], 10);
+
+L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}{r}.png?key=cb1_4cih_1_c6514b7489f0fd9627a06fe5', {
+  attribution: '&copy; OpenStreetMap &copy; CARTO',
+  maxZoom: 19,
+}).addTo(map);
+
+L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+let aoi_rectangle = null;
+map.on('click', (e) => {
+  const lat = parseFloat(document.getElementById('lat').value);
+  const lon = parseFloat(document.getElementById('lon').value);
+  const sizeKm = parseFloat(document.getElementById('size-km').value);
+  drawAOI(e.latlng.lat, e.latlng.lng, sizeKm);
+  document.getElementById('lat').value = e.latlng.lat.toFixed(4);
+  document.getElementById('lon').value = e.latlng.lng.toFixed(4);
+});
+
+function drawAOI(lat, lon, sizeKm) {
+  if (aoi_rectangle) map.removeLayer(aoi_rectangle);
+  const halfDegLat = (sizeKm / 2) / 111.0;
+  const halfDegLon = halfDegLat / Math.cos(lat * Math.PI / 180);
+  const bounds = [
+    [lat - halfDegLat, lon - halfDegLon],
+    [lat + halfDegLat, lon + halfDegLon],
+  ];
+  state.bbox = {
+    west: lon - halfDegLon, south: lat - halfDegLat,
+    east: lon + halfDegLon, north: lat + halfDegLat,
+  };
+  aoi_rectangle = L.rectangle(bounds, {
+    color: '#3b82f6', weight: 2, fillColor: '#3b82f6', fillOpacity: 0.08,
+    dashArray: '6 4',
+  }).addTo(map);
+}
+
+function centerMap() {
+  const lat = parseFloat(document.getElementById('lat').value);
+  const lon = parseFloat(document.getElementById('lon').value);
+  const sz = parseFloat(document.getElementById('size-km').value);
+  if (isNaN(lat) || isNaN(lon)) { toast('Invalid coordinates', 'error'); return; }
+  map.setView([lat, lon], 11);
+  drawAOI(lat, lon, sz);
+}
+
+// ── Search ─────────────────────────────────────────────────────────
+async function searchObservations() {
+  const lat = parseFloat(document.getElementById('lat').value);
+  const lon = parseFloat(document.getElementById('lon').value);
+  const start = document.getElementById('start-date').value;
+  const end = document.getElementById('end-date').value;
+  const cloud = parseFloat(document.getElementById('cloud-pct').value);
+  const sizeKm = parseFloat(document.getElementById('size-km').value);
+
+  if (!lat || !lon || !start || !end) { toast('Fill in all fields', 'error'); return; }
+  if (start > end) { toast('Start date must be before end date', 'error'); return; }
+
+  drawAOI(lat, lon, sizeKm);
+  setStatus('busy', 'Searching Copernicus catalog…');
+  showLoading('Searching Sentinel-2 catalog…', 'Querying CDSE OData API');
+
+  try {
+    const resp = await fetch('/api/observations/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        lat, lon, start_date: start, end_date: end,
+        max_cloud_coverage: cloud, size_km: sizeKm,
+      }),
+    });
+
+    hideLoading();
+    if (!resp.ok) {
+      const err = await resp.json();
+      toast(err.detail || 'Search failed', 'error');
+      setStatus('error', 'Search failed');
+      return;
+    }
+
+    const observations = await resp.json();
+    state.observations = observations;
+    state.beforeObs = null;
+    state.afterObs = null;
+
+    renderObservations(observations);
+    setStatus('ok', `Found ${observations.length} observation${observations.length !== 1 ? 's' : ''}`);
+    toast(`Found ${observations.length} observations`, 'success');
+
+  } catch (e) {
+    hideLoading();
+    toast('Network error: ' + e.message, 'error');
+    setStatus('error', 'Connection error');
+  }
+}
+
+function renderObservations(obs) {
+  const card = document.getElementById('obs-card');
+  const list = document.getElementById('obs-list');
+
+  if (!obs.length) {
+    list.innerHTML = '<p style="color:var(--text-muted); font-size:0.8rem; text-align:center; padding:16px">No observations found. Try expanding the date range or cloud limit.</p>';
+    card.style.display = 'block';
+    return;
+  }
+
+  list.innerHTML = obs.map((o, i) => {
+    const cloud = o.cloud_coverage;
+    const cloudClass = cloud < 10 ? 'low' : cloud > 40 ? 'high' : '';
+    return `
+      <div class="obs-item" id="obs-${i}" onclick="selectObservation(${i})">
+        <div class="obs-name">${o.name.substring(0, 42)}…</div>
+        <div class="obs-meta">
+          <span class="obs-badge obs-date">📅 ${o.acquisition_date}</span>
+          <span class="obs-badge obs-cloud ${cloudClass}">☁ ${cloud.toFixed(1)}%</span>
+          <span class="obs-badge obs-cloud">${o.platform}</span>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  card.style.display = 'block';
+  document.getElementById('action-card').style.display = 'block';
+}
+
+function selectObservation(idx) {
+  const obs = state.observations[idx];
+  const el = document.getElementById(`obs-${idx}`);
+
+  // Remove existing selection classes from this element
+  const isCurrentBefore = state.beforeObs && state.beforeObs.product_id === obs.product_id;
+  const isCurrentAfter = state.afterObs && state.afterObs.product_id === obs.product_id;
+
+  if (isCurrentBefore) {
+    // Deselect before
+    state.beforeObs = null;
+    el.classList.remove('selected-before');
+    el.querySelector('.obs-slot')?.remove();
+    updateSlots();
+    return;
+  }
+  if (isCurrentAfter) {
+    state.afterObs = null;
+    el.classList.remove('selected-after');
+    el.querySelector('.obs-slot')?.remove();
+    updateSlots();
+    return;
+  }
+
+  if (!state.beforeObs) {
+    state.beforeObs = obs;
+    el.classList.add('selected-before');
+    const badge = document.createElement('span');
+    badge.className = 'obs-slot slot-before';
+    badge.textContent = 'BEFORE';
+    el.appendChild(badge);
+  } else if (!state.afterObs) {
+    if (obs.acquisition_date < state.beforeObs.acquisition_date) {
+      // Swap: this older one becomes before
+      // Remove before class from old before
+      state.observations.forEach((o, i) => {
+        if (state.beforeObs && o.product_id === state.beforeObs.product_id) {
+          const oldEl = document.getElementById(`obs-${i}`);
+          oldEl.classList.remove('selected-before');
+          oldEl.querySelector('.obs-slot')?.remove();
+          oldEl.classList.add('selected-after');
+          const badge = document.createElement('span');
+          badge.className = 'obs-slot slot-after'; badge.textContent = 'AFTER';
+          oldEl.appendChild(badge);
+        }
+      });
+      state.afterObs = state.beforeObs;
+      state.beforeObs = obs;
+      el.classList.add('selected-before');
+      const badge = document.createElement('span');
+      badge.className = 'obs-slot slot-before'; badge.textContent = 'BEFORE';
+      el.appendChild(badge);
+    } else {
+      state.afterObs = obs;
+      el.classList.add('selected-after');
+      const badge = document.createElement('span');
+      badge.className = 'obs-slot slot-after'; badge.textContent = 'AFTER';
+      el.appendChild(badge);
+    }
+  }
+  updateSlots();
+  updateCompareBtn();
+}
+
+function updateSlots() {
+  const b = document.getElementById('slot-before');
+  const a = document.getElementById('slot-after');
+  if (state.beforeObs) {
+    b.textContent = `📷 Before: ${state.beforeObs.acquisition_date}`;
+    b.classList.add('filled');
+  } else {
+    b.textContent = '📷 Before: not set';
+    b.classList.remove('filled');
+  }
+  if (state.afterObs) {
+    a.textContent = `📷 After: ${state.afterObs.acquisition_date}`;
+    a.classList.add('filled');
+  } else {
+    a.textContent = '📷 After: not set';
+    a.classList.remove('filled');
+  }
+  updateCompareBtn();
+}
+
+function updateCompareBtn() {
+  const btn = document.getElementById('compare-btn');
+  btn.disabled = !(state.downloadedBefore && state.downloadedAfter);
+}
+
+// ── Download ───────────────────────────────────────────────────────
+async function downloadImages() {
+  if (!state.beforeObs || !state.afterObs) {
+    toast('Select BEFORE and AFTER observations first', 'error'); return;
+  }
+
+  const lat = parseFloat(document.getElementById('lat').value);
+  const lon = parseFloat(document.getElementById('lon').value);
+  const sizeKm = parseFloat(document.getElementById('size-km').value);
+
+  setStatus('busy', 'Downloading satellite imagery…');
+  document.getElementById('download-btn').disabled = true;
+
+  for (const [slot, obs] of [['before', state.beforeObs], ['after', state.afterObs]]) {
+    showLoading(`Downloading ${slot} image…`, `${obs.acquisition_date} · ${obs.cloud_coverage.toFixed(1)}% cloud`);
+    try {
+      const resp = await fetch('/api/imagery/download', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          product_id: obs.product_id,
+          lat, lon, size_km: sizeKm,
+          bands: ['B02','B03','B04','B08','B11','B12','SCL'],
+          resolution_m: 10,
+          bbox_west: state.bbox?.west,
+          bbox_south: state.bbox?.south,
+          bbox_east: state.bbox?.east,
+          bbox_north: state.bbox?.north,
+        }),
+      });
+      hideLoading();
+      if (!resp.ok) {
+        const err = await resp.json();
+        toast(`Download failed: ${err.detail}`, 'error');
+        document.getElementById('download-btn').disabled = false;
+        setStatus('error', 'Download failed');
+        return;
+      }
+      const data = await resp.json();
+      if (slot === 'before') { state.downloadedBefore = data; }
+      else { state.downloadedAfter = data; }
+
+      // Show preview on map
+      if (data.preview_url) showPreviewOnMap(data.preview_url, slot);
+      toast(`${slot.toUpperCase()} image downloaded (${data.width}×${data.height}px)`, 'success');
+    } catch(e) {
+      hideLoading();
+      toast('Network error: ' + e.message, 'error');
+      document.getElementById('download-btn').disabled = false;
+      setStatus('error', 'Download failed');
+      return;
+    }
+  }
+
+  document.getElementById('download-btn').disabled = false;
+  updateCompareBtn();
+  setStatus('ok', 'Both images downloaded. Ready to compare.');
+}
+
+function showPreviewOnMap(url, slot) {
+  if (!state.bbox) return;
+  const bounds = [[state.bbox.south, state.bbox.west], [state.bbox.north, state.bbox.east]];
+  const opacity = slot === 'before' ? 0.6 : 0.8;
+  L.imageOverlay(url, bounds, { opacity, className: `preview-${slot}` }).addTo(map);
+}
+
+// ── Compare ───────────────────────────────────────────────────────
+async function runComparison() {
+  if (!state.downloadedBefore || !state.downloadedAfter) {
+    toast('Download images first', 'error'); return;
+  }
+
+  const lat = parseFloat(document.getElementById('lat').value);
+  const lon = parseFloat(document.getElementById('lon').value);
+  const sizeKm = parseFloat(document.getElementById('size-km').value);
+  const threshold = parseFloat(document.getElementById('threshold').value);
+
+  setStatus('busy', 'Running change detection…');
+  showLoading('Running change detection…', 'Aligning imagery · computing NDVI · detecting changes');
+
+  try {
+    const resp = await fetch('/api/analysis/compare', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        before_product_id: state.beforeObs.product_id,
+        after_product_id: state.afterObs.product_id,
+        lat, lon, size_km: sizeKm, threshold,
+        bbox_west: state.bbox?.west,
+        bbox_south: state.bbox?.south,
+        bbox_east: state.bbox?.east,
+        bbox_north: state.bbox?.north,
+      }),
+    });
+
+    if (!resp.ok) {
+      const err = await resp.json();
+      hideLoading();
+      toast('Analysis failed: ' + err.detail, 'error');
+      setStatus('error', 'Analysis failed');
+      return;
+    }
+
+    const data = await resp.json();
+    state.resultId = data.result_id;
+    pollResults(data.result_id);
+
+  } catch(e) {
+    hideLoading();
+    toast('Error: ' + e.message, 'error');
+    setStatus('error', 'Error');
+  }
+}
+
+async function pollResults(resultId) {
+  try {
+    const resp = await fetch(`/api/analysis/${resultId}`);
+    const data = await resp.json();
+
+    if (data.status === 'running' || data.status === 'pending') {
+      setTimeout(() => pollResults(resultId), 2000);
+      return;
+    }
+
+    hideLoading();
+
+    if (data.status === 'error') {
+      toast('Analysis error: ' + data.error_message, 'error');
+      setStatus('error', 'Analysis failed');
+      return;
+    }
+
+    // Fetch full results
+    const fullResp = await fetch(`/api/analysis/${resultId}/results`);
+    const full = await fullResp.json();
+    renderResults(full);
+    setStatus('ok', `Change detection complete: ${full.statistics.change_percentage?.toFixed(1) || '?'}% change detected`);
+    toast('Analysis complete!', 'success');
+
+  } catch(e) {
+    hideLoading();
+    toast('Polling error: ' + e.message, 'error');
+  }
+}
+
+function renderResults(data) {
+  const stats = data.statistics || {};
+  const hints = stats.index_hints || {};
+  const viz = data.visualizations || {};
+
+  const panel = document.getElementById('results-panel');
+  const body = document.getElementById('results-body');
+
+  const changePct = (stats.change_percentage ?? 0).toFixed(1);
+  const changedKm2 = (stats.changed_area_km2 ?? 0).toFixed(3);
+  const validKm2 = (stats.valid_area_km2 ?? 0).toFixed(2);
+  const totalKm2 = (stats.total_area_km2 ?? 0).toFixed(2);
+
+  const colorClass = changePct > 20 ? 'danger' : changePct > 5 ? '' : 'success';
+
+  let hintsHtml = '';
+  const hintLabels = {
+    vegetation_decrease_km2: '🌿 Possible vegetation loss',
+    vegetation_increase_km2: '🌱 Possible vegetation growth',
+    water_change_km2: '💧 Possible water change',
+    buildup_change_km2: '🏗 Possible built-up change',
+  };
+  for (const [k, label] of Object.entries(hintLabels)) {
+    if (hints[k] !== undefined) {
+      hintsHtml += `<div class="hint-item"><span class="hint-key">${label}</span><span class="hint-val">${hints[k].toFixed(3)} km²</span></div>`;
+    }
+  }
+
+  let vizHtml = '';
+  const vizLabels = {
+    before_rgb: 'Before',
+    after_rgb: 'After',
+    change_score: 'Change Score',
+    change_mask: 'Change Mask',
+    ndvi_before: 'NDVI Before',
+    ndvi_diff: 'NDVI Change',
+  };
+  for (const [k, label] of Object.entries(vizLabels)) {
+    if (viz[k]) {
+      vizHtml += `<div class="viz-item" onclick="window.open('${viz[k]}','_blank')">
+        <img src="${viz[k]}" alt="${label}" loading="lazy">
+        <div class="viz-label">${label}</div>
+      </div>`;
+    }
+  }
+
+  body.innerHTML = `
+    <div class="stats-grid">
+      <div class="stat-item">
+        <div class="stat-val ${colorClass}">${changePct}%</div>
+        <div class="stat-label">Changed Area</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-val">${changedKm2}</div>
+        <div class="stat-label">Changed km²</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-val">${validKm2}</div>
+        <div class="stat-label">Valid Area km²</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-val">${totalKm2}</div>
+        <div class="stat-label">Total Area km²</div>
+      </div>
+    </div>
+
+    ${hintsHtml ? `<div class="hints-section"><div class="hints-title">Spectral Index Hints</div>${hintsHtml}</div>` : ''}
+
+    <div class="viz-grid">${vizHtml}</div>
+
+    <div class="disclaimer">
+      ⚠ These results are spectral estimates based on pixel differences.
+      Seasonal variation, cloud shadows, and atmospheric effects can produce
+      apparent changes. Do not interpret as confirmed land-cover change
+      without ground verification.
+    </div>
+
+    ${viz.composite ? `<div style="margin-top:12px"><a href="${viz.composite}" target="_blank" class="btn btn-secondary btn-sm">🖼 View Full Summary</a></div>` : ''}
+  `;
+
+  panel.classList.add('visible');
+
+  // Show change mask on map
+  if (viz.change_mask && state.bbox) {
+    const bounds = [[state.bbox.south, state.bbox.west], [state.bbox.north, state.bbox.east]];
+    if (state.changeLayer) map.removeLayer(state.changeLayer);
+    state.changeLayer = L.imageOverlay(viz.change_mask, bounds, { opacity: 0.65 }).addTo(map);
+    document.getElementById('toggle-change-btn').style.display = 'flex';
+  }
+}
+
+function closeResults() {
+  document.getElementById('results-panel').classList.remove('visible');
+}
+
+function toggleChangeLayer() {
+  if (!state.changeLayer) return;
+  const btn = document.getElementById('toggle-change-btn');
+  state.changeLayerVisible = !state.changeLayerVisible;
+  if (state.changeLayerVisible) {
+    state.changeLayer.setOpacity(0.65);
+    btn.classList.add('active');
+  } else {
+    state.changeLayer.setOpacity(0);
+    btn.classList.remove('active');
+  }
+}
+
+// ── Helpers ───────────────────────────────────────────────────────
+function setStatus(state, text) {
+  const dot = document.getElementById('status-dot');
+  const txt = document.getElementById('status-text');
+  dot.className = 'status-dot ' + state;
+  txt.textContent = text;
+}
+
+function showLoading(msg, sub) {
+  document.getElementById('loading-msg').textContent = msg;
+  document.getElementById('loading-sub').textContent = sub || '';
+  document.getElementById('loading').classList.add('visible');
+}
+
+function hideLoading() {
+  document.getElementById('loading').classList.remove('visible');
+}
+
+function toast(msg, type = 'info') {
+  const container = document.getElementById('toasts');
+  const el = document.createElement('div');
+  const icons = { error: '❌', success: '✅', info: 'ℹ️' };
+  el.className = `toast toast-${type}`;
+  el.innerHTML = `<span>${icons[type]||'•'}</span><span>${msg}</span>`;
+  container.appendChild(el);
+  setTimeout(() => { el.style.opacity = '0'; el.style.transform = 'translateX(120%)'; el.style.transition = 'all 0.3s'; setTimeout(() => el.remove(), 300); }, 4000);
+}
+
+// ── Init ──────────────────────────────────────────────────────────
+drawAOI(11.8745, 75.3704, 10);
+setStatus('ok', 'Ready. Enter coordinates and search for imagery.');
+
+// Set default end date to today
+const today = new Date().toISOString().split('T')[0];
+document.getElementById('end-date').value = today;
+
+// Set default start date 1 year ago
+const oneYearAgo = new Date(Date.now() - 365*24*60*60*1000).toISOString().split('T')[0];
+document.getElementById('start-date').value = oneYearAgo;
+</script>
+</body>
+</html>
